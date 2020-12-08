@@ -1,0 +1,194 @@
+title This is a title
+control mystation
+actor bus
+boundary station_manager
+database ledger
+control comptroller
+database ledger (comp)
+database log
+
+group Create SHM
+	box over mystation:allocate
+
+	box over mystation:attach
+    
+	box over mystation:store config at byte 0
+	box over mystation:detach
+end 
+
+group Initialize SHM
+	box over mystation:attach
+    
+    box over mystation:init data
+    
+    box over mystation:init semaphores
+    
+    box over mystation:detach
+end
+
+box over mystation:fork & exec processes
+
+mystation->bus:fork() x N
+mystation->station_manager:fork()
+mystation->comptroller:fork()
+
+parallel
+box over station_manager:init local ledgers
+box over mystation:wait for processes
+box over comptroller: initialize local ledger
+
+parallel end
+
+parallel 
+	box over comptroller:attach
+    box over station_manager:attach
+    box over bus:attach
+parallel end
+
+==start simulation== 
+
+parallel 
+box over bus: sleep random t
+box over station_manager: down(SMF)
+box over comptroller: down(FCM)
+parallel off
+
+group Step1: Arrive, request entrance
+	bus->ledger: store initial bus data
+    
+    group force fifo operation
+    box over bus:down(BUS_Q_IN)
+    group produce
+    	box over bus: down(SME)
+        box over bus: place index on queue
+        box over bus: up(SMF)
+    end 
+    	
+    box over bus: down(BUS_IN)
+    
+    box over bus:up(BUS_Q_IN)
+    
+    end
+    
+    box over station_manager:consume
+    station_manager->station_manager: add to local structure
+    
+    box over station_manager: lock(L)
+    station_manager->ledger: write parking spot
+    station_manager->ledger: write bus data 
+    
+    box over station_manager: unlock(L)
+    box over station_manager:up(BUS_IN)
+   
+end 
+
+box over station_manager: down(SMF)
+
+group Step2: Receive response from SM
+
+	box over bus: prod msg to comptroller (enter station)
+    box over bus: up(COMP)
+    box over comptroller: consume
+    comptroller->ledger (comp): update local stats
+    
+end 
+
+box over comptroller:down(COMP)
+
+group Step3: Move to strip (manoeuvre)	
+	box over bus: sleep random t
+    box over bus: prod <pointer>
+    box over bus: up(SM)
+        
+     station_manager->station_manager: update local structure
+     
+      box over station_manager: notify others as needed
+    
+end 
+
+box over station_manager: down(SMF)
+
+group Step4: Update Ledger
+	box over bus: lock(L)
+    
+    bus->ledger: increase passenger arrivals
+    
+    box over bus: unlock(L)
+end 
+
+group Step5: Board passengers (sleep)
+	box over bus: sleep random t        
+    box over bus: board random no of passengers
+end 
+
+group Step6: Request departure
+	group force fifo operation
+	box over bus:down(BUS_Q_OUT)
+
+	box over bus: prod <pointer>
+    box over bus: up(SM)
+    box over bus: down(BUS_OUT)
+    
+    box over bus:up(BUS_Q_OUT)
+    end
+
+    box over station_manager:consume
+    station_manager->station_manager: update local structure
+    
+    box over station_manager:up(BUS_OUT)
+   
+ 
+end 
+
+box over station_manager: down(SMF)
+
+group Step7: Receive response from SM
+		box over bus: prod msg to comptroller (exit station)
+    box over bus: up(COMP)
+    
+  	box over bus: sleep random t  
+        
+    box over comptroller: consume
+    comptroller->comptroller: update local stats
+    	    
+end 
+
+box over comptroller:down(FCM)    
+
+group Step8: Depart
+	box over bus: prod <pointer>
+    box over bus: up(SM)
+    box over station_manager:consume
+    station_manager->station_manager: update local structure
+    
+    box over station_manager: lock(L)
+    station_manager->ledger: write departure time
+    station_manager->ledger: write passengers out
+   station_manager->ledger: update status  
+    
+    box over station_manager: unlock(L)
+    
+    box over station_manager: notify others as needed
+end 
+
+parallel 
+	box over comptroller:detach
+    box over station_manager:detach
+    box over bus:detach
+parallel end
+
+
+parallel
+box over station_manager:free local ledgers
+box over comptroller:down(FCM)  
+parallel end
+
+
+==end simulation== 
+
+
+
+box over mystation:destroy semaphores
+box over mystation:destroy SHM
+
+
